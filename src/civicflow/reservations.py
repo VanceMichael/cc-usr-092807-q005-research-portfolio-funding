@@ -44,3 +44,15 @@ class ReservationBook:
         with self.database.connect() as connection:
             row = connection.execute("SELECT COALESCE(SUM(quantity),0) AS used FROM resource_reservations WHERE resource_id=? AND status IN ('held','confirmed') AND start_at<=? AND end_at>?", (resource_id, instant, instant)).fetchone()
             return int(row["used"])
+
+    def list_for_resource(self, resource_id: str) -> list[dict]:
+        """列出资源全部预约,供占用审计。"""
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM resource_reservations WHERE resource_id=? ORDER BY start_at,reservation_id", (resource_id,)).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_for_subject(self, subject_id: str) -> list[dict]:
+        """列出占用主体(如课题)的全部预约。"""
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM resource_reservations WHERE subject_id=? ORDER BY start_at,reservation_id", (subject_id,)).fetchall()
+            return [dict(row) for row in rows]

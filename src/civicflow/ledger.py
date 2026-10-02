@@ -58,3 +58,16 @@ class Ledger:
         with self.database.connect() as connection:
             row = connection.execute("SELECT COALESCE(SUM(CASE direction WHEN 'debit' THEN amount_minor ELSE -amount_minor END),0) AS value FROM journal_entries WHERE journal_key=? AND currency=?", (journal_key, currency)).fetchone()
             return int(row["value"])
+
+    def entries(self, journal_key: str) -> list[dict]:
+        """按入账顺序列出账簿全部分录,供审计下钻。"""
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM journal_entries WHERE journal_key=? ORDER BY occurred_at,entry_id", (journal_key,)).fetchall()
+            return [dict(row) for row in rows]
+
+    def journals(self, *, prefix: str) -> list[str]:
+        """按前缀列出账簿标识,前缀中的 LIKE 通配符会被转义。"""
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT DISTINCT journal_key FROM journal_entries WHERE journal_key LIKE ? ESCAPE '\\' ORDER BY journal_key", (escaped + "%",)).fetchall()
+            return [str(row["journal_key"]) for row in rows]

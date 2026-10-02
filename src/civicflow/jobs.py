@@ -28,13 +28,19 @@ class JobQueue:
             raise ValidationError("租约参数不合法")
         lease_until = (parse_instant(self.clock.now()) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
         with self.database.transaction() as connection:
-            rows = connection.execute("SELECT * FROM scheduled_jobs WHERE run_at<=? AND status IN ('waiting','retry') AND (lease_until IS NULL OR lease_until<?) ORDER BY run_at,job_id LIMIT ?", (self.clock.now(), self.clock.now(), limit)).fetchall()
+            rows = connection.execute("SELECT * FROM scheduled_jobs WHERE run_at<=? AND ((status IN ('waiting','retry') AND (lease_until IS NULL OR lease_until<?)) OR (status='running' AND lease_until<?)) ORDER BY run_at,job_id LIMIT ?", (self.clock.now(), self.clock.now(), self.clock.now(), limit)).fetchall()
             result = []
             for row in rows:
                 changed = connection.execute("UPDATE scheduled_jobs SET status='running',lease_until=?,attempt=attempt+1 WHERE job_id=? AND (lease_until IS NULL OR lease_until<?)", (lease_until, row["job_id"], self.clock.now())).rowcount
                 if changed:
                     item = dict(row); item["lease_until"] = lease_until; result.append(item)
             return result
+
+    def for_subject(self, subject_id: str) -> list[dict]:
+        """列出某主体的全部任务,供中断后核对是否已调度。"""
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM scheduled_jobs WHERE subject_id=? ORDER BY run_at,job_id", (subject_id,)).fetchall()
+            return [dict(row) for row in rows]
 
     def finish(self, job_id: str) -> None:
         with self.database.transaction() as connection:
