@@ -124,6 +124,228 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     last_error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS jobs_due ON scheduled_jobs(status, run_at, lease_until);
+-- 研发组合管理：层级单元与冻结版本
+CREATE TABLE IF NOT EXISTS pf_guidelines (
+    guideline_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    PRIMARY KEY(guideline_id, version)
+);
+CREATE TABLE IF NOT EXISTS pf_budgets (
+    budget_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    unit_type TEXT NOT NULL,
+    unit_id TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    carried_from TEXT,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    PRIMARY KEY(budget_id, version)
+);
+CREATE INDEX IF NOT EXISTS pf_budgets_unit ON pf_budgets(unit_type, unit_id, version);
+CREATE UNIQUE INDEX IF NOT EXISTS pf_budgets_carryover ON pf_budgets(carried_from) WHERE carried_from IS NOT NULL;
+CREATE TABLE IF NOT EXISTS pf_budget_lines (
+    budget_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    topic_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    PRIMARY KEY(budget_id, version, topic_id, source_kind, source_ref)
+);
+CREATE TABLE IF NOT EXISTS pf_units (
+    unit_type TEXT NOT NULL,
+    unit_id TEXT NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    parent_id TEXT,
+    leader TEXT,
+    state TEXT NOT NULL,
+    guideline_id TEXT,
+    guideline_version INTEGER,
+    budget_id TEXT,
+    budget_version INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    PRIMARY KEY(unit_type, unit_id)
+);
+CREATE INDEX IF NOT EXISTS pf_units_parent ON pf_units(parent_id);
+CREATE TABLE IF NOT EXISTS pf_participants (
+    participant_id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    unit_type TEXT NOT NULL,
+    unit_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    joined_at TEXT NOT NULL,
+    UNIQUE(org_id, unit_type, unit_id)
+);
+-- 里程碑（阶段）与预算占用
+CREATE TABLE IF NOT EXISTS pf_milestones (
+    milestone_id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL,
+    code TEXT NOT NULL,
+    title TEXT NOT NULL,
+    leader TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    hold_minor INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS pf_milestones_topic ON pf_milestones(topic_id, state);
+-- 不可改写资金分录
+CREATE TABLE IF NOT EXISTS pf_fund_entries (
+    entry_id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source_kind TEXT,
+    source_ref TEXT,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    reference TEXT NOT NULL,
+    milestone_id TEXT,
+    contract_id TEXT,
+    receipt_id TEXT,
+    occurred_at TEXT NOT NULL,
+    posted_by TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pf_fund_dedup ON pf_fund_entries(topic_id, kind, reference);
+CREATE INDEX IF NOT EXISTS pf_fund_topic ON pf_fund_entries(topic_id, occurred_at);
+CREATE INDEX IF NOT EXISTS pf_fund_contract ON pf_fund_entries(contract_id);
+CREATE INDEX IF NOT EXISTS pf_fund_milestone ON pf_fund_entries(milestone_id);
+-- 受限样品/大型设备专享占用
+CREATE TABLE IF NOT EXISTS pf_occupancies (
+    occupancy_id TEXT PRIMARY KEY,
+    asset_kind TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    topic_id TEXT NOT NULL,
+    holder TEXT NOT NULL,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS pf_occ_window ON pf_occupancies(asset_kind, asset_id, start_at, end_at, status);
+-- 共享平台设施使用与计费
+CREATE TABLE IF NOT EXISTS pf_facility_usage (
+    usage_id TEXT PRIMARY KEY,
+    facility_id TEXT NOT NULL,
+    topic_id TEXT NOT NULL,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    charge_minor INTEGER NOT NULL,
+    charge_reference TEXT NOT NULL,
+    charged_entry_id TEXT,
+    used_by TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    UNIQUE(facility_id, charge_reference)
+);
+CREATE INDEX IF NOT EXISTS pf_usage_topic ON pf_facility_usage(topic_id);
+-- 成果资料与授权
+CREATE TABLE IF NOT EXISTS pf_materials (
+    material_id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    fields_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pf_material_grants (
+    grant_id TEXT PRIMARY KEY,
+    material_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    fields_json TEXT NOT NULL,
+    valid_until TEXT NOT NULL,
+    state TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    UNIQUE(material_id, org_id)
+);
+-- 知识产权、技术合同与贡献比例
+CREATE TABLE IF NOT EXISTS pf_ips (
+    ip_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    topic_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pf_contracts (
+    contract_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pf_contract_refs (
+    contract_id TEXT NOT NULL,
+    ref_kind TEXT NOT NULL,
+    ref_id TEXT NOT NULL,
+    PRIMARY KEY(contract_id, ref_kind, ref_id)
+);
+CREATE TABLE IF NOT EXISTS pf_contract_topics (
+    contract_id TEXT NOT NULL,
+    topic_id TEXT NOT NULL,
+    share_bp INTEGER NOT NULL,
+    PRIMARY KEY(contract_id, topic_id)
+);
+CREATE TABLE IF NOT EXISTS pf_contributions (
+    result_type TEXT NOT NULL,
+    result_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    share_bp INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY(result_type, result_id, project_id)
+);
+-- 批准链
+CREATE TABLE IF NOT EXISTS pf_approvals (
+    approval_id TEXT PRIMARY KEY,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    step INTEGER NOT NULL,
+    reviewer TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    UNIQUE(subject_type, subject_id, step)
+);
+CREATE INDEX IF NOT EXISTS pf_approvals_subject ON pf_approvals(subject_type, subject_id, step);
+-- 重大调整（延期、负责人变更、任务合并）
+CREATE TABLE IF NOT EXISTS pf_adjustments (
+    adjustment_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    topic_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    state TEXT NOT NULL,
+    applicant TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+-- 验收回执（重复回执不得再次释放资金）
+CREATE TABLE IF NOT EXISTS pf_acceptances (
+    receipt_id TEXT PRIMARY KEY,
+    milestone_id TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    processed_at TEXT,
+    release_entry_id TEXT
+);
+-- 内容冲突复核
+CREATE TABLE IF NOT EXISTS pf_conflicts (
+    conflict_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    subject_ref TEXT NOT NULL,
+    detail_json TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
 """
 
 
